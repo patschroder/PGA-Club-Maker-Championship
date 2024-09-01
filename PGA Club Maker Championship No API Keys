@@ -1,0 +1,141 @@
+import requests
+import json
+import pandas as pd
+import time
+import numpy as np
+
+epoch_time = int(time.time())
+
+excelImport = pd.read_excel('Golf Sponsers.xlsx')
+dfSponsors = excelImport.copy()
+
+brandList = dfSponsors['Brand'].tolist()
+brandList = list(dict.fromkeys(brandList))
+brandList
+
+#TournamentList
+def get_tournList():
+    url = "https://live-golf-data.p.rapidapi.com/schedule"
+    querystring = {"orgId":"1","year":"2024"}
+    headers = {
+        "x-rapidapi-key": "",
+        "x-rapidapi-host": "live-golf-data.p.rapidapi.com"
+    }
+    response = requests.get(url, headers=headers, params=querystring, verify=False)
+    result = response.json()
+    result
+    # df = pd.DataFrame(data=result['schedule'])
+    df = pd.json_normalize(result, 'schedule')
+    df['date.end.$date.$numberLong'] = df['date.end.$date.$numberLong'].str[0:10].astype(int)
+    rslt_df = df[df['date.end.$date.$numberLong'] < epoch_time] 
+    tournList = rslt_df['tournId'].tolist()
+    return tournList
+
+tournList = get_tournList()
+tournList.remove("519")
+tournList.remove("060")
+
+def get_FedExPoints(list):
+    dfs = []
+    for tourn in tournList:
+        print(tourn)
+        url = "https://live-golf-data.p.rapidapi.com/points"
+        querystring = {"tournId":{tourn},"year":"2024"}
+        headers = {
+            "x-rapidapi-key": "",
+            "x-rapidapi-host": "live-golf-data.p.rapidapi.com"
+        }
+        response = requests.get(url, headers=headers, params=querystring, verify=False)
+        result = response.json()
+        df = pd.json_normalize(result,"leaderboard", meta="tournId")
+        df['fullName'] = df['firstName'] + " " + df['lastName']
+        df = df.rename(columns={'points.$numberDouble': 'points'})
+        dfs.append(df)
+        fullPoints = pd.concat(dfs)
+    fullPoints = fullPoints.rename(columns={'points.$numberInt': 'pointsGlitch'})
+    fullPoints['points'] = fullPoints['points'].combine_first(fullPoints['pointsGlitch'])
+    fullPoints = fullPoints[['fullName','points','tournId']]
+    return fullPoints
+
+dfPoints = get_FedExPoints(tournList)
+
+
+dfCombined = pd.concat([dfPoints.merge(dfSponsors,how='inner',on='fullName'),dfPoints.merge(dfSponsors,how='inner',left_on='fullName',right_on='AKA')])
+dfClean = dfCombined[dfCombined['Brand'].isnull() == False]
+dfClean['points'] = pd.to_numeric(dfClean['points'],downcast='float')
+
+def desgTop5_dg(dfClean):
+    dfClean['pointsForTournament'] = (dfClean['Designated Top 5 DG'] * dfClean['points'])
+    dfClean = dfClean[['Brand','pointsForTournament']]
+    result = dfClean.groupby(['Brand']).sum()
+    result = result.sort_values(by=['pointsForTournament'],ascending=False)
+    return result
+
+def desgTop3_dg(dfClean):
+    dfClean['pointsForTournament'] = (dfClean['Designated Top 3 DG'] * dfClean['points'])
+    dfClean = dfClean[['Brand','pointsForTournament']]
+    result = dfClean.groupby(['Brand']).sum()
+    result = result.sort_values(by=['pointsForTournament'],ascending=False)
+    return result
+
+def desgTop5_owgr(dfClean):
+    dfClean['pointsForTournament'] = (dfClean['Designated Top 5 OWGR'] * dfClean['points'])
+    dfClean = dfClean[['Brand','pointsForTournament']]
+    result = dfClean.groupby(['Brand']).sum()
+    result = result.sort_values(by=['pointsForTournament'],ascending=False)
+    return result
+
+def desgTop3_owgr(dfClean):
+    dfClean['pointsForTournament'] = (dfClean['Designated Top 3 OWGR'] * dfClean['points'])
+    dfClean = dfClean[['Brand','pointsForTournament']]
+    result = dfClean.groupby(['Brand']).sum()
+    result = result.sort_values(by=['pointsForTournament'],ascending=False)
+    return result
+
+def desgTop1_dg(dfClean):
+    dfClean['pointsForTournament'] = (dfClean['Designated Top 1 DG'] * dfClean['points'])
+    dfClean = dfClean[['Brand','pointsForTournament']]
+    result = dfClean.groupby(['Brand']).sum()
+    result = result.sort_values(by=['pointsForTournament'],ascending=False)
+    return result
+
+def desgTop1_owgr(dfClean):
+    dfClean['pointsForTournament'] = (dfClean['Designated Top 1 OWGR'] * dfClean['points'])
+    dfClean = dfClean[['Brand','pointsForTournament']]
+    result = dfClean.groupby(['Brand']).sum()
+    result = result.sort_values(by=['pointsForTournament'],ascending=False)
+    return result
+
+def allPointsCount(dfClean):
+    dfClean = dfClean[['Brand','points']]
+    result = dfClean.groupby(['Brand']).sum()
+    result = result.sort_values(by=['points'],ascending=False)
+    return result
+
+def innerTournColumnCreator(x):
+    if x < 3.5:
+        return 1
+    if x == 3.5:
+        return .5
+    else:
+        return 0
+
+def top3EachTournament(dfClean):
+    dfClean["rank"] = dfClean.groupby(["tournId","Brand"])["points"].rank(ascending=False)
+    dfClean["pointsCount"] =  dfClean["rank"].map(innerTournColumnCreator)
+    dfClean["pointsForTournament"] = (dfClean["pointsCount"] * dfClean["points"])
+    dfClean = dfClean[['Brand','pointsForTournament']]
+    result = dfClean.groupby(['Brand']).sum()
+    result = result.sort_values(by=['pointsForTournament'],ascending=False)
+    result = result.rename(columns = {'pointsForTournament': 'totalPoints'})
+    return result
+
+print(allPointsCount(dfClean))
+print(top3EachTournament(dfClean))
+print(desgTop5_owgr(dfClean))
+print(desgTop5_dg(dfClean))
+print(desgTop3_owgr(dfClean))
+print(desgTop3_dg(dfClean))
+print(desgTop1_owgr(dfClean))
+print(desgTop1_dg(dfClean))
+
